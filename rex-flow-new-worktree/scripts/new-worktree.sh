@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Create a git worktree for the current repository under ~/.local/share/rex,
-# then open a Rex window in that worktree.
+# then open a Rex window in that worktree: agent on the left, terminal on the
+# right.
 set -euo pipefail
 
 root=${REX_FLOW_WORKTREE_ROOT:-$HOME/.local/share/rex}
@@ -12,6 +13,7 @@ task=
 task_file=
 auto=0
 open_window=1
+terminal=1
 json=0
 fetch=0
 
@@ -24,7 +26,8 @@ usage() {
   cat <<'EOF'
 Usage: new-worktree.sh SLUG [options]
 
-Create <root>/<project>/<slug> from a target branch and open a Rex window there.
+Create <root>/<project>/<slug> from a target branch and open a Rex window there
+with the agent on the left and a terminal on the right.
 
 Arguments:
   SLUG                 Worktree name, also the branch suffix. Letters, digits,
@@ -37,6 +40,7 @@ Options:
                        first prompt
   --task-file PATH     Read the task prompt from PATH
   --auto               Pass --auto to opencode (approve permissions)
+  --no-terminal        Do not add the terminal pane beside the agent
   --no-window          Create the worktree without opening a Rex window
   --fetch              Run git fetch --prune origin before creating
   --json               Print one JSON object instead of plain lines
@@ -59,6 +63,7 @@ while [ $# -gt 0 ]; do
     --task-file) [ $# -ge 2 ] || die "--task-file needs a path"; task_file=$2; shift 2 ;;
     --task-file=*) task_file=${1#*=}; shift ;;
     --auto) auto=1; shift ;;
+    --no-terminal) terminal=0; shift ;;
     --no-window) open_window=0; shift ;;
     --fetch) fetch=1; shift ;;
     --json) json=1; shift ;;
@@ -120,6 +125,7 @@ git show-ref --verify --quiet "refs/heads/$branch" && die "branch '$branch' alre
 
 session=
 block_id=
+terminal_id=
 window_id=
 if [ "$open_window" -eq 1 ]; then
   command -v rex >/dev/null || die "rex not found; use --no-window to create the worktree only"
@@ -154,6 +160,12 @@ if [ "$open_window" -eq 1 ]; then
   fi
   window_id=$(printf '%s' "$created" | jq -r '.window_id // empty')
   block_id=$(printf '%s' "$created" | jq -r '.block_ids[0] // empty')
+  if [ "$terminal" -eq 1 ] && [ -n "$task" ] && [ -n "$block_id" ]; then
+    split=$(rex split -s "$session" -b "$block_id" --split=right --ratio 50 \
+      --label Terminal --focus=false -c "$path" --json) ||
+      die "window created at $path but the terminal pane failed"
+    terminal_id=$(printf '%s' "$split" | jq -r '.block_ids[0] // empty')
+  fi
 fi
 
 if [ "$json" -eq 1 ]; then
@@ -166,9 +178,11 @@ if [ "$json" -eq 1 ]; then
     --arg session "$session" \
     --arg window "$window_id" \
     --arg block "$block_id" \
+    --arg terminal "$terminal_id" \
     --arg task "$task" \
     '{project: $project, slug: $slug, branch: $branch, target: $target, path: $path}
      + (if $window == "" then {} else {session_id: $session, window_id: $window, block_id: $block} end)
+     + (if $terminal == "" then {} else {terminal_block_id: $terminal} end)
      + (if $task == "" then {} else {agent: "opencode", task: $task} end)'
 else
   printf 'project: %s\n' "$project"
@@ -179,5 +193,8 @@ else
   fi
   if [ -n "$task" ]; then
     printf 'agent:   opencode (task submitted)\n'
+  fi
+  if [ -n "$terminal_id" ]; then
+    printf 'terminal: %s (split right)\n' "$terminal_id"
   fi
 fi

@@ -18,7 +18,8 @@ One command creates the worktree, the branch, and the Rex window. Defaults:
 | Branch | `rex/<slug>` |
 | Path | `~/.local/share/rex/<project>/<slug>` |
 | Window | New window in the current Rex session (`$REX_SESSION`) |
-| Agent | `opencode` in the window, task submitted with `--task`; plain shell without it |
+| Layout | Agent on the left, shell terminal split on the right (50/50) |
+| Agent | `opencode` in the left pane, task submitted with `--task`; plain shell without it |
 
 ## Workflow
 
@@ -30,7 +31,9 @@ One command creates the worktree, the branch, and the Rex window. Defaults:
 /path/to/rex-flow-new-worktree/scripts/new-worktree.sh <slug> --task "<user's task>" --json
 ```
 
-4. Read the JSON and report the worktree path, branch, base ref, and Rex window. The new window opens `opencode` in the worktree and submits the task as its first prompt.
+4. Read the JSON and report the worktree path, branch, base ref, and Rex window. The new window opens `opencode` in the left pane, submits the task as its first prompt, and splits a shell terminal on the right. Without `--task` the window is a single plain shell.
+
+Use `--no-terminal` when the user wants only the agent pane.
 
 Non-negotiable: the script is the only way to create the worktree. It refuses existing branches, existing paths, invalid slugs, missing target branches, missing Rex sessions, and missing `opencode` when `--task` is used, so surface its error instead of retrying blindly.
 
@@ -56,6 +59,12 @@ Auto-approve opencode permissions for unattended work:
 scripts/new-worktree.sh billing-retry --fetch --auto --task "Retry billing webhooks on 5xx" --json
 ```
 
+Agent pane only, no terminal split:
+
+```bash
+scripts/new-worktree.sh solo-agent --no-terminal --task "Add structured logging" --json
+```
+
 Long task from a file:
 
 ```bash
@@ -78,6 +87,7 @@ scripts/new-worktree.sh refactor-router --title "Router refactor" --task "Refact
 
 - Work happens in the returned `path`; never reuse the original checkout.
 - With `--task`, opencode submits the prompt itself. Do not `rex send` the task again.
+- The terminal pane is a shell in the worktree, split right and focused away from the agent. Use `terminal_block_id` from the JSON to capture or target it.
 - To check progress, capture the returned `block_id`:
   `rex capture -s <session_id> -b <block_id> --trim`
 - A branch already named `rex/<slug>` means the work exists: report it and ask whether to open the existing worktree instead of creating a duplicate.
