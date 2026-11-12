@@ -8,14 +8,14 @@ them when you ask for `@rex-flow-new-worktree` or `@rex-clear`.
 
 | Skill | What it does | Invoke |
 | --- | --- | --- |
-| [`rex-flow-new-worktree`](#rex-flow-new-worktree) | Creates a git worktree, a `rex/<slug>` branch, and a Rex tab running `opencode` on your task | `@rex-flow-new-worktree` |
+| [`rex-flow-new-worktree`](#rex-flow-new-worktree) | Creates a git worktree, a `rex/<slug>` branch, and a Rex tab running `pi` on your task | `@rex-flow-new-worktree` |
 | [`rex-clear`](#rex-clear) | Deletes that worktree, force-deletes its branch, and closes its tab | `@rex-clear` |
 
 ```
 @rex-flow-new-worktree "add login redirect"
         │
         ├─ git worktree add -b rex/add-login-redirect  ~/.local/share/rex/<project>/add-login-redirect
-        └─ rex window new ... opencode --prompt "add login redirect"
+        └─ rex window new ... pi -- "add login redirect"
                     │
                     ▼   work happens in the new tab, not the coordinator tab
 @rex-clear
@@ -104,7 +104,9 @@ Default settings:
 | Branch | `rex/<slug>` |
 | Worktree path | `~/.local/share/rex/<project>/<slug>` |
 | Tab | New window in the current Rex session (`$REX_SESSION`) |
-| Agent | `opencode`, task submitted as the first prompt with `--task`; plain shell without it |
+| Agent | Same as the coordinator (`pi` or `opencode`), task submitted as the first prompt with `--task`; plain shell without it |
+
+The new window uses the coordinator's agent: Pi → Pi, OpenCode → OpenCode. No fixed agent default.
 
 ### Options
 
@@ -113,25 +115,34 @@ Default settings:
 | `SLUG` | Worktree name and branch suffix. Letters, digits, `.`, `_`, `-` |
 | `--target BRANCH` | Base ref instead of `master`/`main` |
 | `--title TITLE` | Rex tab title (default: the slug) |
-| `--task TEXT` | Start `opencode` in the tab and submit `TEXT` |
+| `--agent NAME` | `auto` (default, match coordinator), `pi`, or `opencode` |
+| `--provider NAME` | Pi provider; requires `--model` |
+| `--model ID` | Pi model, to match the coordinator explicitly |
+| `--task TEXT` | Start `pi` in the tab and submit `TEXT` |
 | `--task-file PATH` | Read the task prompt from a file |
-| `--auto` | Pass `--auto` to `opencode` (approve permissions) |
+| `--auto` | OpenCode only: pass `--auto` (approve permissions) |
 | `--no-window` | Create the worktree only |
 | `--fetch` | `git fetch --prune origin` before branching |
 | `--json` | Print one JSON object |
 
+### Agent selection
+
+Match the coordinator agent: when running in Pi, pass `--agent pi`; when running in OpenCode, pass `--agent opencode`. Never choose a fixed default or infer the harness from the model provider. The script's `--agent auto` default also checks the process ancestry and Pi/generic agent markers, but explicit selection by the coordinator avoids ambiguous inherited environments. If the harness is unsupported or cannot be identified, stop and report that rather than launching a different agent. Currently supported launchers are Pi and OpenCode.
+
+The spawned agent starts a fresh session, not a copy of the coordinator conversation. Pi model selection remains optional via `--provider <provider> --model <model-id>`; `--auto` is OpenCode-only.
+
 ### Examples
 
 ```bash
-# default: branch from master, hand the task to opencode in a new tab
+# default: branch from master, hand the task to Pi in a new tab
 scripts/new-worktree.sh add-login-redirect \
   --task "Add a login redirect after auth and cover it with a test" --json
 
 # explicit base branch
 scripts/new-worktree.sh fix-auth-cookie --target develop --task "Fix the expired auth cookie path"
 
-# unattended
-scripts/new-worktree.sh billing-retry --fetch --auto --task "Retry billing webhooks on 5xx"
+# OpenCode, unattended
+scripts/new-worktree.sh billing-retry --agent opencode --fetch --auto --task "Retry billing webhooks on 5xx"
 
 # worktree only, no tab
 scripts/new-worktree.sh scratch-spike --no-window
@@ -149,7 +160,7 @@ scripts/new-worktree.sh scratch-spike --no-window
   "session_id": "…",
   "window_id": "…",
   "block_id": "…",
-  "agent": "opencode",
+  "agent": "pi",
   "task": "Add a login redirect after auth and cover it with a test"
 }
 ```
@@ -161,7 +172,7 @@ Check progress with `rex capture -s <session_id> -b <block_id> --trim`.
 ### Guards
 
 The script refuses existing branches, existing paths, invalid slugs, missing target
-branches, missing Rex sessions, and a missing `opencode` when `--task` is used. It
+branches, missing Rex sessions, and a missing selected agent when `--task` is used. It
 surfaces the error instead of retrying. Work always happens in the new worktree; the
 coordinator tab only creates and reports.
 
@@ -255,7 +266,7 @@ scripts/clear-worktree.sh --slug add-login-redirect --no-force
 | git | both scripts |
 | rex | opening/closing tabs (`--no-window`/`--keep-window` aside) |
 | jq | `--json` output and tab resolution |
-| opencode | `new-worktree.sh --task` |
+| pi or opencode (same as coordinator) | `new-worktree.sh --task` |
 
 ## Environment
 

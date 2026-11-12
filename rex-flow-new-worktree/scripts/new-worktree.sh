@@ -11,6 +11,9 @@ slug=
 title=
 task=
 task_file=
+agent=auto
+provider=
+model=
 auto=0
 open_window=1
 terminal=1
@@ -36,10 +39,12 @@ Arguments:
 Options:
   --target BRANCH      Branch or ref to base on (default: master, then main)
   --title TITLE        Rex window title (default: SLUG)
-  --task TEXT          Start opencode in the new window and submit TEXT as its
-                       first prompt
+  --agent NAME         auto (default): match coordinator; or pi / opencode
+  --provider NAME      Pi provider (requires --model)
+  --model ID           Pi model (default: Pi's configured model)
+  --task TEXT          Start the selected agent and submit TEXT as its first prompt
   --task-file PATH     Read the task prompt from PATH
-  --auto               Pass --auto to opencode (approve permissions)
+  --auto               OpenCode only: pass --auto (approve permissions)
   --no-terminal        Do not add the terminal pane beside the agent
   --no-window          Create the worktree without opening a Rex window
   --fetch              Run git fetch --prune origin before creating
@@ -62,6 +67,12 @@ while [ $# -gt 0 ]; do
     --task=*) task=${1#*=}; shift ;;
     --task-file) [ $# -ge 2 ] || die "--task-file needs a path"; task_file=$2; shift 2 ;;
     --task-file=*) task_file=${1#*=}; shift ;;
+    --agent) [ $# -ge 2 ] || die "--agent needs a name"; agent=$2; shift 2 ;;
+    --agent=*) agent=${1#*=}; shift ;;
+    --provider) [ $# -ge 2 ] || die "--provider needs a name"; provider=$2; shift 2 ;;
+    --provider=*) provider=${1#*=}; shift ;;
+    --model) [ $# -ge 2 ] || die "--model needs an ID"; model=$2; shift 2 ;;
+    --model=*) model=${1#*=}; shift ;;
     --auto) auto=1; shift ;;
     --no-terminal) terminal=0; shift ;;
     --no-window) open_window=0; shift ;;
@@ -89,6 +100,32 @@ if [ -n "$task_file" ]; then
 fi
 if [ -n "$task" ] && [ "$open_window" -eq 0 ]; then
   die "--task needs a Rex window; drop --no-window"
+fi
+
+# Prefer the nearest running harness over inherited markers (agents can nest).
+if [ "$agent" = auto ] && [ -n "$task" ]; then
+  pid=$PPID
+  while [ "$pid" -gt 1 ] 2>/dev/null; do
+    process=$(ps -p "$pid" -o comm= 2>/dev/null || true)
+    case ${process##*/} in
+      pi|opencode) agent=${process##*/}; break ;;
+    esac
+    pid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')
+  done
+  if [ "$agent" = auto ]; then
+    case ${AI_AGENT:-} in
+      pi|opencode) agent=$AI_AGENT ;;
+      *) [ "${PI_CODING_AGENT:-}" != true ] || agent=pi ;;
+    esac
+  fi
+  [ "$agent" != auto ] || die "cannot identify coordinator agent; pass --agent pi or --agent opencode"
+fi
+case $agent in auto|pi|opencode) ;; *) die "unsupported agent '$agent': use pi or opencode" ;; esac
+if [ "$agent" = pi ]; then
+  [ "$auto" -eq 0 ] || die "--auto is OpenCode-only; Pi uses its configured permission policy"
+  [ -z "$provider" ] || [ -n "$model" ] || die "--provider requires --model"
+else
+  [ -z "$provider$model" ] || die "--provider and --model are Pi-only"
 fi
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not inside a git repository"
@@ -130,7 +167,7 @@ window_id=
 if [ "$open_window" -eq 1 ]; then
   command -v rex >/dev/null || die "rex not found; use --no-window to create the worktree only"
   if [ -n "$task" ]; then
-    command -v opencode >/dev/null || die "opencode not found; omit --task to open a plain shell"
+    command -v "$agent" >/dev/null || die "$agent not found; omit --task to open a plain shell"
   fi
   session=${REX_SESSION:-}
   if [ -z "$session" ]; then
@@ -149,9 +186,16 @@ git -C "$repo_root" worktree add -b "$branch" "$path" "$resolved" >&2
 title=${title:-$slug}
 if [ "$open_window" -eq 1 ]; then
   if [ -n "$task" ]; then
-    window_cmd=(opencode)
-    [ "$auto" -eq 1 ] && window_cmd+=(--auto)
-    window_cmd+=(--prompt "$task")
+    window_cmd=("$agent")
+    if [ "$agent" = pi ]; then
+      [ -z "$provider" ] || window_cmd+=(--provider "$provider")
+      [ -z "$model" ] || window_cmd+=(--model "$model")
+      # Stop option parsing so tasks beginning with '-' stay prompt text.
+      window_cmd+=(-- "$task")
+    else
+      [ "$auto" -eq 1 ] && window_cmd+=(--auto)
+      window_cmd+=(--prompt "$task")
+    fi
     created=$(rex window new -s "$session" "$title" -c "$path" --json -- "${window_cmd[@]}") ||
       die "worktree created at $path but Rex window failed"
   else
@@ -180,10 +224,11 @@ if [ "$json" -eq 1 ]; then
     --arg block "$block_id" \
     --arg terminal "$terminal_id" \
     --arg task "$task" \
+    --arg agent "$agent" \
     '{project: $project, slug: $slug, branch: $branch, target: $target, path: $path}
      + (if $window == "" then {} else {session_id: $session, window_id: $window, block_id: $block} end)
      + (if $terminal == "" then {} else {terminal_block_id: $terminal} end)
-     + (if $task == "" then {} else {agent: "opencode", task: $task} end)'
+     + (if $task == "" then {} else {agent: $agent, task: $task} end)'
 else
   printf 'project: %s\n' "$project"
   printf 'branch:  %s (from %s)\n' "$branch" "$resolved"
@@ -192,7 +237,7 @@ else
     printf 'window:  %s (session %s)\n' "$window_id" "$session"
   fi
   if [ -n "$task" ]; then
-    printf 'agent:   opencode (task submitted)\n'
+    printf 'agent:   %s (task submitted)\n' "$agent"
   fi
   if [ -n "$terminal_id" ]; then
     printf 'terminal: %s (split right)\n' "$terminal_id"
